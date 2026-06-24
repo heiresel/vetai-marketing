@@ -62,7 +62,7 @@ jobs:
           curl -L "${{ secrets.VETAI_AUDIO_BASE_URL }}/screenshots/${{ github.event.inputs.screenshot }}.png" -o assets/screenshot.png
           curl -L "${{ secrets.VETAI_AUDIO_BASE_URL }}/birds.mp3" -o assets/audio.mp3
 
-      - name: Render video ES
+      - name: Render videos
         run: |
           cat << 'EOF' > render.js
           const { createCanvas, loadImage } = require('canvas');
@@ -79,94 +79,150 @@ jobs:
           const DURATION = 25;
           const TOTAL_FRAMES = FPS * DURATION;
 
+          // Layout zones
+          const ZONE_TOP_END = 380;
+          const ZONE_SCREENSHOT_END = 1540;
+          // ZONE_BOTTOM: 1540 to 1920
+
+          function fadeAlpha(t, start, fadeDuration = 0.5) {
+            return Math.min(1, Math.max(0, (t - start) / fadeDuration));
+          }
+
+          function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+            const words = text.split(' ');
+            let line = '';
+            for (let n = 0; n < words.length; n++) {
+              const testLine = line + words[n] + ' ';
+              if (ctx.measureText(testLine).width > maxWidth && n > 0) {
+                ctx.fillText(line.trim(), x, y);
+                line = words[n] + ' ';
+                y += lineHeight;
+              } else {
+                line = testLine;
+              }
+            }
+            ctx.fillText(line.trim(), x, y);
+          }
+
+          function drawTextWithShadow(ctx, fn) {
+            ctx.save();
+            ctx.shadowColor = 'rgba(0,0,0,0.8)';
+            ctx.shadowBlur = 12;
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 2;
+            fn();
+            ctx.restore();
+          }
+
           async function renderVideo(lang) {
-            const hook = lang === 'es' ? process.env.HOOK_ES : process.env.HOOK_EN;
+            const hook     = lang === 'es' ? process.env.HOOK_ES     : process.env.HOOK_EN;
+            const especie  = lang === 'es' ? process.env.ESPECIE_ES  : process.env.ESPECIE_EN;
             const problema = lang === 'es' ? process.env.PROBLEMA_ES : process.env.PROBLEMA_EN;
             const solucion = lang === 'es' ? process.env.SOLUCION_ES : process.env.SOLUCION_EN;
-            const cta = lang === 'es' ? process.env.CTA_ES : process.env.CTA_EN;
+            const cta      = lang === 'es' ? process.env.CTA_ES      : process.env.CTA_EN;
 
             const screenshot = await loadImage('assets/screenshot.png');
             const framesDir = `frames_${lang}`;
             fs.mkdirSync(framesDir, { recursive: true });
+
+            // Screenshot scaled to fill full width (1080px)
+            const scale = WIDTH / screenshot.width;
+            const sw = WIDTH;
+            const sh = screenshot.height * scale;
+            const sy = ZONE_TOP_END;
 
             for (let i = 0; i < TOTAL_FRAMES; i++) {
               const canvas = createCanvas(WIDTH, HEIGHT);
               const ctx = canvas.getContext('2d');
               const t = i / FPS;
 
-              // Fondo negro
+              // --- Background ---
               ctx.fillStyle = '#000000';
               ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-              // Screenshot centrado con padding
-              const scale = Math.min(WIDTH / screenshot.width, HEIGHT * 0.7 / screenshot.height);
-              const sw = screenshot.width * scale;
-              const sh = screenshot.height * scale;
-              const sx = (WIDTH - sw) / 2;
-              const sy = (HEIGHT - sh) / 2 + 100;
-              ctx.drawImage(screenshot, sx, sy, sw, sh);
+              // --- ZONA SCREENSHOT (always visible, no text on top) ---
+              ctx.drawImage(screenshot, 0, sy, sw, sh);
 
-              // Overlay oscuro sobre screenshot
-              ctx.fillStyle = 'rgba(0,0,0,0.4)';
-              ctx.fillRect(sx, sy, sw, sh);
+              // --- ZONA SUPERIOR ---
 
-              // HOOK (0-5s) — aparece con fade in
+              // 0-8s: hook + especie
               if (t < 8) {
-                const alpha = Math.min(1, t / 0.5);
+                const alpha = fadeAlpha(t, 0);
                 ctx.globalAlpha = alpha;
-                ctx.fillStyle = '#FFFFFF';
-                ctx.font = 'bold 72px sans-serif';
+                drawTextWithShadow(ctx, () => {
+                  ctx.fillStyle = '#FFFFFF';
+                  ctx.font = 'bold 80px sans-serif';
+                  ctx.textAlign = 'center';
+                  wrapText(ctx, hook, WIDTH / 2, 110, WIDTH - 80, 92);
+                });
+                ctx.fillStyle = '#CCCCCC';
+                ctx.font = '50px sans-serif';
                 ctx.textAlign = 'center';
-                wrapText(ctx, hook, WIDTH/2, 180, WIDTH - 80, 85);
+                ctx.fillText(especie, WIDTH / 2, 310);
                 ctx.globalAlpha = 1;
               }
 
-              // PROBLEMA (5-15s)
-              if (t >= 5 && t < 18) {
-                const alpha = Math.min(1, (t - 5) / 0.5);
+              // 8-16s: problema (rojo)
+              if (t >= 8 && t < 16) {
+                const alpha = fadeAlpha(t, 8);
                 ctx.globalAlpha = alpha;
-                ctx.fillStyle = '#FF4444';
-                ctx.font = 'bold 52px sans-serif';
-                ctx.textAlign = 'center';
-                wrapText(ctx, problema, WIDTH/2, 350, WIDTH - 80, 62);
+                drawTextWithShadow(ctx, () => {
+                  ctx.fillStyle = '#FF4444';
+                  ctx.font = 'bold 80px sans-serif';
+                  ctx.textAlign = 'center';
+                  wrapText(ctx, problema, WIDTH / 2, 110, WIDTH - 80, 92);
+                });
                 ctx.globalAlpha = 1;
               }
 
-              // SOLUCION (15-22s)
-              if (t >= 15 && t < 23) {
-                const alpha = Math.min(1, (t - 15) / 0.5);
+              // 16-23s: solución (verde)
+              if (t >= 16 && t < 23) {
+                const alpha = fadeAlpha(t, 16);
                 ctx.globalAlpha = alpha;
-                ctx.fillStyle = '#44FF88';
-                ctx.font = 'bold 52px sans-serif';
-                ctx.textAlign = 'center';
-                wrapText(ctx, solucion, WIDTH/2, 350, WIDTH - 80, 62);
+                drawTextWithShadow(ctx, () => {
+                  ctx.fillStyle = '#44FF88';
+                  ctx.font = 'bold 80px sans-serif';
+                  ctx.textAlign = 'center';
+                  wrapText(ctx, solucion, WIDTH / 2, 110, WIDTH - 80, 92);
+                });
                 ctx.globalAlpha = 1;
               }
 
-              // CTA (20-25s)
-              if (t >= 20) {
-                const alpha = Math.min(1, (t - 20) / 0.5);
+              // 23-25s: zona superior limpia (nada)
+
+              // --- ZONA INFERIOR ---
+
+              // Logo Vet-AI (siempre visible)
+              ctx.globalAlpha = 1;
+              ctx.fillStyle = '#FFFFFF';
+              ctx.font = 'bold 44px sans-serif';
+              ctx.textAlign = 'center';
+              ctx.fillText('🐾 Vet-AI', WIDTH / 2, 1880);
+
+              // 23-25s: CTA verde
+              if (t >= 23) {
+                const alpha = fadeAlpha(t, 23);
                 ctx.globalAlpha = alpha;
-                // Fondo verde para CTA
+
+                // Botón verde
+                const btnX = 60, btnY = 1560, btnW = WIDTH - 120, btnH = 160;
                 ctx.fillStyle = '#00C853';
                 ctx.beginPath();
-                ctx.roundRect(80, HEIGHT - 280, WIDTH - 160, 140, 20);
+                ctx.roundRect(btnX, btnY, btnW, btnH, 24);
                 ctx.fill();
+
                 ctx.fillStyle = '#FFFFFF';
-                ctx.font = 'bold 58px sans-serif';
+                ctx.font = 'bold 46px sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText(cta, WIDTH/2, HEIGHT - 190);
+                ctx.fillText('Descargá en Google Play', WIDTH / 2, 1622);
+                ctx.font = 'bold 52px sans-serif';
+                ctx.fillText(cta, WIDTH / 2, 1688);
+
                 ctx.globalAlpha = 1;
               }
 
-              // Logo Vet-AI
-              ctx.fillStyle = '#FFFFFF';
-              ctx.font = 'bold 48px sans-serif';
-              ctx.textAlign = 'left';
-              ctx.fillText('🐾 Vet-AI', 60, HEIGHT - 80);
-
               const buffer = canvas.toBuffer('image/png');
-              fs.writeFileSync(path.join(framesDir, `frame_${String(i).padStart(5,'0')}.png`), buffer);
+              fs.writeFileSync(path.join(framesDir, `frame_${String(i).padStart(5, '0')}.png`), buffer);
             }
 
             await new Promise((resolve, reject) => {
@@ -193,23 +249,6 @@ jobs:
             console.log(`Video ${lang} renderizado: output_${lang}.mp4`);
           }
 
-          function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
-            const words = text.split(' ');
-            let line = '';
-            for (let n = 0; n < words.length; n++) {
-              const testLine = line + words[n] + ' ';
-              const metrics = ctx.measureText(testLine);
-              if (metrics.width > maxWidth && n > 0) {
-                ctx.fillText(line, x, y);
-                line = words[n] + ' ';
-                y += lineHeight;
-              } else {
-                line = testLine;
-              }
-            }
-            ctx.fillText(line, x, y);
-          }
-
           (async () => {
             await renderVideo('es');
             await renderVideo('en');
@@ -217,6 +256,8 @@ jobs:
           EOF
           HOOK_ES="${{ github.event.inputs.hook_es }}" \
           HOOK_EN="${{ github.event.inputs.hook_en }}" \
+          ESPECIE_ES="${{ github.event.inputs.especie_es }}" \
+          ESPECIE_EN="${{ github.event.inputs.especie_en }}" \
           PROBLEMA_ES="${{ github.event.inputs.problema_es }}" \
           PROBLEMA_EN="${{ github.event.inputs.problema_en }}" \
           SOLUCION_ES="${{ github.event.inputs.solucion_es }}" \
