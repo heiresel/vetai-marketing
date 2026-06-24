@@ -42,9 +42,6 @@ on:
       n8n_webhook_url:
         description: 'URL del webhook de n8n para retornar el resultado'
         required: true
-      zernio_token:
-        description: 'Token de Zernio'
-        required: true
 
 jobs:
   render:
@@ -62,8 +59,8 @@ jobs:
       - name: Download assets
         run: |
           mkdir -p assets
-          curl -L "https://heiresel.github.io/vetai-audio/screenshots/${{ github.event.inputs.screenshot }}.png" -o assets/screenshot.png
-          curl -L "https://heiresel.github.io/vetai-audio/birds.mp3" -o assets/audio.mp3
+          curl -L "${{ secrets.VETAI_AUDIO_BASE_URL }}/screenshots/${{ github.event.inputs.screenshot }}.png" -o assets/screenshot.png
+          curl -L "${{ secrets.VETAI_AUDIO_BASE_URL }}/birds.mp3" -o assets/audio.mp3
 
       - name: Render video ES
         run: |
@@ -320,6 +317,6 @@ jobs:
             console.log('Listo.');
           })();
           EOF
-          ZERNIO_TOKEN="${{ github.event.inputs.zernio_token }}" \
+          ZERNIO_TOKEN="${{ secrets.ZERNIO_TOKEN }}" \
           N8N_WEBHOOK_URL="${{ github.event.inputs.n8n_webhook_url }}" \
           node upload.js
