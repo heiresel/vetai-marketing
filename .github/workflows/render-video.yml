@@ -1,0 +1,325 @@
+name: Render Marketing Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      variante:
+        description: 'Variante (A, B, C, E, F)'
+        required: true
+      especie_es:
+        description: 'Especie en español'
+        required: true
+      especie_en:
+        description: 'Especie en inglés'
+        required: true
+      hook_es:
+        description: 'Hook en español'
+        required: true
+      hook_en:
+        description: 'Hook en inglés'
+        required: true
+      problema_es:
+        description: 'Problema en español'
+        required: true
+      problema_en:
+        description: 'Problema en inglés'
+        required: true
+      solucion_es:
+        description: 'Solución en español'
+        required: true
+      solucion_en:
+        description: 'Solución en inglés'
+        required: true
+      cta_es:
+        description: 'CTA en español'
+        required: true
+      cta_en:
+        description: 'CTA en inglés'
+        required: true
+      screenshot:
+        description: 'Nombre del screenshot (home/analyzer/resultado/chat-empty/chat-conversation/chat-diagnosis)'
+        required: true
+      n8n_webhook_url:
+        description: 'URL del webhook de n8n para retornar el resultado'
+        required: true
+      zernio_token:
+        description: 'Token de Zernio'
+        required: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm install canvas fluent-ffmpeg @ffmpeg-installer/ffmpeg axios form-data
+
+      - name: Download assets
+        run: |
+          mkdir -p assets
+          curl -L "https://heiresel.github.io/vetai-audio/screenshots/${{ github.event.inputs.screenshot }}.png" -o assets/screenshot.png
+          curl -L "https://heiresel.github.io/vetai-audio/birds.mp3" -o assets/audio.mp3
+
+      - name: Render video ES
+        run: |
+          cat << 'EOF' > render.js
+          const { createCanvas, loadImage } = require('canvas');
+          const ffmpeg = require('fluent-ffmpeg');
+          const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+          const fs = require('fs');
+          const path = require('path');
+
+          ffmpeg.setFfmpegPath(ffmpegPath);
+
+          const WIDTH = 1080;
+          const HEIGHT = 1920;
+          const FPS = 30;
+          const DURATION = 25;
+          const TOTAL_FRAMES = FPS * DURATION;
+
+          async function renderVideo(lang) {
+            const hook = lang === 'es' ? process.env.HOOK_ES : process.env.HOOK_EN;
+            const problema = lang === 'es' ? process.env.PROBLEMA_ES : process.env.PROBLEMA_EN;
+            const solucion = lang === 'es' ? process.env.SOLUCION_ES : process.env.SOLUCION_EN;
+            const cta = lang === 'es' ? process.env.CTA_ES : process.env.CTA_EN;
+
+            const screenshot = await loadImage('assets/screenshot.png');
+            const framesDir = `frames_${lang}`;
+            fs.mkdirSync(framesDir, { recursive: true });
+
+            for (let i = 0; i < TOTAL_FRAMES; i++) {
+              const canvas = createCanvas(WIDTH, HEIGHT);
+              const ctx = canvas.getContext('2d');
+              const t = i / FPS;
+
+              // Fondo negro
+              ctx.fillStyle = '#000000';
+              ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+              // Screenshot centrado con padding
+              const scale = Math.min(WIDTH / screenshot.width, HEIGHT * 0.7 / screenshot.height);
+              const sw = screenshot.width * scale;
+              const sh = screenshot.height * scale;
+              const sx = (WIDTH - sw) / 2;
+              const sy = (HEIGHT - sh) / 2 + 100;
+              ctx.drawImage(screenshot, sx, sy, sw, sh);
+
+              // Overlay oscuro sobre screenshot
+              ctx.fillStyle = 'rgba(0,0,0,0.4)';
+              ctx.fillRect(sx, sy, sw, sh);
+
+              // HOOK (0-5s) — aparece con fade in
+              if (t < 8) {
+                const alpha = Math.min(1, t / 0.5);
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 72px sans-serif';
+                ctx.textAlign = 'center';
+                wrapText(ctx, hook, WIDTH/2, 180, WIDTH - 80, 85);
+                ctx.globalAlpha = 1;
+              }
+
+              // PROBLEMA (5-15s)
+              if (t >= 5 && t < 18) {
+                const alpha = Math.min(1, (t - 5) / 0.5);
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = '#FF4444';
+                ctx.font = 'bold 52px sans-serif';
+                ctx.textAlign = 'center';
+                wrapText(ctx, problema, WIDTH/2, 350, WIDTH - 80, 62);
+                ctx.globalAlpha = 1;
+              }
+
+              // SOLUCION (15-22s)
+              if (t >= 15 && t < 23) {
+                const alpha = Math.min(1, (t - 15) / 0.5);
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = '#44FF88';
+                ctx.font = 'bold 52px sans-serif';
+                ctx.textAlign = 'center';
+                wrapText(ctx, solucion, WIDTH/2, 350, WIDTH - 80, 62);
+                ctx.globalAlpha = 1;
+              }
+
+              // CTA (20-25s)
+              if (t >= 20) {
+                const alpha = Math.min(1, (t - 20) / 0.5);
+                ctx.globalAlpha = alpha;
+                // Fondo verde para CTA
+                ctx.fillStyle = '#00C853';
+                ctx.beginPath();
+                ctx.roundRect(80, HEIGHT - 280, WIDTH - 160, 140, 20);
+                ctx.fill();
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 58px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(cta, WIDTH/2, HEIGHT - 190);
+                ctx.globalAlpha = 1;
+              }
+
+              // Logo Vet-AI
+              ctx.fillStyle = '#FFFFFF';
+              ctx.font = 'bold 48px sans-serif';
+              ctx.textAlign = 'left';
+              ctx.fillText('🐾 Vet-AI', 60, HEIGHT - 80);
+
+              const buffer = canvas.toBuffer('image/png');
+              fs.writeFileSync(path.join(framesDir, `frame_${String(i).padStart(5,'0')}.png`), buffer);
+            }
+
+            await new Promise((resolve, reject) => {
+              ffmpeg()
+                .input(path.join(framesDir, 'frame_%05d.png'))
+                .inputFPS(FPS)
+                .input('assets/audio.mp3')
+                .outputOptions([
+                  '-c:v libx264',
+                  '-preset ultrafast',
+                  '-crf 28',
+                  '-pix_fmt yuv420p',
+                  '-c:a aac',
+                  '-b:a 128k',
+                  '-shortest',
+                  '-movflags +faststart'
+                ])
+                .output(`output_${lang}.mp4`)
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
+            });
+
+            console.log(`Video ${lang} renderizado: output_${lang}.mp4`);
+          }
+
+          function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+            const words = text.split(' ');
+            let line = '';
+            for (let n = 0; n < words.length; n++) {
+              const testLine = line + words[n] + ' ';
+              const metrics = ctx.measureText(testLine);
+              if (metrics.width > maxWidth && n > 0) {
+                ctx.fillText(line, x, y);
+                line = words[n] + ' ';
+                y += lineHeight;
+              } else {
+                line = testLine;
+              }
+            }
+            ctx.fillText(line, x, y);
+          }
+
+          (async () => {
+            await renderVideo('es');
+            await renderVideo('en');
+          })();
+          EOF
+          HOOK_ES="${{ github.event.inputs.hook_es }}" \
+          HOOK_EN="${{ github.event.inputs.hook_en }}" \
+          PROBLEMA_ES="${{ github.event.inputs.problema_es }}" \
+          PROBLEMA_EN="${{ github.event.inputs.problema_en }}" \
+          SOLUCION_ES="${{ github.event.inputs.solucion_es }}" \
+          SOLUCION_EN="${{ github.event.inputs.solucion_en }}" \
+          CTA_ES="${{ github.event.inputs.cta_es }}" \
+          CTA_EN="${{ github.event.inputs.cta_en }}" \
+          node render.js
+
+      - name: Upload to Zernio and notify n8n
+        run: |
+          cat << 'EOF' > upload.js
+          const fs = require('fs');
+          const https = require('https');
+
+          const ZERNIO_TOKEN = process.env.ZERNIO_TOKEN;
+          const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL;
+
+          async function presign(filename) {
+            return new Promise((resolve, reject) => {
+              const body = JSON.stringify({ filename, contentType: 'video/mp4' });
+              const req = https.request({
+                hostname: 'zernio.com',
+                path: '/api/v1/media/presign',
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${ZERNIO_TOKEN}`,
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(body)
+                }
+              }, res => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => resolve(JSON.parse(data)));
+              });
+              req.on('error', reject);
+              req.write(body);
+              req.end();
+            });
+          }
+
+          async function upload(uploadUrl, filepath) {
+            return new Promise((resolve, reject) => {
+              const fileData = fs.readFileSync(filepath);
+              const url = new URL(uploadUrl);
+              const req = https.request({
+                hostname: url.hostname,
+                path: url.pathname + url.search,
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'video/mp4',
+                  'Content-Length': fileData.length
+                }
+              }, res => {
+                res.on('data', () => {});
+                res.on('end', () => resolve(res.statusCode));
+              });
+              req.on('error', reject);
+              req.write(fileData);
+              req.end();
+            });
+          }
+
+          async function notifyN8n(publicUrl_es, publicUrl_en) {
+            return new Promise((resolve, reject) => {
+              const body = JSON.stringify({ publicUrl_es, publicUrl_en });
+              const url = new URL(N8N_WEBHOOK);
+              const req = https.request({
+                hostname: url.hostname,
+                path: url.pathname,
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(body)
+                }
+              }, res => {
+                res.on('data', () => {});
+                res.on('end', () => resolve(res.statusCode));
+              });
+              req.on('error', reject);
+              req.write(body);
+              req.end();
+            });
+          }
+
+          (async () => {
+            console.log('Subiendo video ES...');
+            const presign_es = await presign('marketing_es.mp4');
+            await upload(presign_es.uploadUrl, 'output_es.mp4');
+            console.log('ES publicUrl:', presign_es.publicUrl);
+
+            console.log('Subiendo video EN...');
+            const presign_en = await presign('marketing_en.mp4');
+            await upload(presign_en.uploadUrl, 'output_en.mp4');
+            console.log('EN publicUrl:', presign_en.publicUrl);
+
+            console.log('Notificando a n8n...');
+            await notifyN8n(presign_es.publicUrl, presign_en.publicUrl);
+            console.log('Listo.');
+          })();
+          EOF
+          ZERNIO_TOKEN="${{ github.event.inputs.zernio_token }}" \
+          N8N_WEBHOOK_URL="${{ github.event.inputs.n8n_webhook_url }}" \
+          node upload.js
